@@ -85,19 +85,19 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
             // world coordinates
             float xw = (*it2).x; // world position in m with x facing forward from sensor
             float yw = (*it2).y; // world position in m with y facing left from sensor
-            xwmin = xwmin<xw ? xwmin : xw;
-            ywmin = ywmin<yw ? ywmin : yw;
-            ywmax = ywmax>yw ? ywmax : yw;
+            xwmin = min(xwmin, xw);
+            ywmin = min(ywmin, yw);
+            ywmax = max(ywmax, yw);
 
             // top-view coordinates
             int y = (-xw * imageSize.height / worldSize.height) + imageSize.height;
             int x = (-yw * imageSize.width / worldSize.width) + imageSize.width / 2;
 
             // find enclosing rectangle
-            top = top<y ? top : y;
-            left = left<x ? left : x;
-            bottom = bottom>y ? bottom : y;
-            right = right>x ? right : x;
+            top = min(top, y);
+            left = min(left, x);
+            bottom = max(bottom, y);
+            right = max(right, x);
 
             // draw individual point
             cv::circle(topviewImg, cv::Point(x, y), 4, currColor, -1);
@@ -109,9 +109,9 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
         // augment object with some key data
         char str1[200], str2[200];
         sprintf(str1, "id=%d, #pts=%d", it1->boxID, (int)it1->lidarPoints.size());
-        putText(topviewImg, str1, cv::Point2f(left-250, bottom+50), cv::FONT_ITALIC, 2, currColor);
+        putText(topviewImg, str1, cv::Point2f(left-125, bottom+25), cv::FONT_ITALIC, 1, currColor);
         sprintf(str2, "xmin=%2.2f m, yw=%2.2f m", xwmin, ywmax-ywmin);
-        putText(topviewImg, str2, cv::Point2f(left-250, bottom+125), cv::FONT_ITALIC, 2, currColor);  
+        putText(topviewImg, str2, cv::Point2f(left-125, bottom+63), cv::FONT_ITALIC, 1, currColor);  
     }
 
     // plot distance markers
@@ -159,5 +159,146 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
 
 void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
 {
-    // ...
+    // TODO early escapes
+
+    // create and initialize the structure that will keep the counts of matches between pairs of bounding boxes
+    // matchCounts[i][j] = number of matches where the first point is contained in prevFrame.boundingBoxes[i]
+    // and the second point is contained in currFrame.boundingBoxes[j]
+    std::vector<std::vector<int>> matchCounts;
+    for (int i = 0; i < prevFrame.boundingBoxes.size(); ++i)
+    {
+        std::vector<int> row;
+        for (int j = 0; j < currFrame.boundingBoxes.size(); ++j)
+        {
+            row.push_back(0);
+        }
+        matchCounts.push_back(row);
+    }
+
+    // figure out which boxes contain the points from each match
+    for (auto it = matches.begin(); it != matches.end(); ++it)
+    {
+        cv::KeyPoint prevPoint = prevFrame.keypoints[it->queryIdx];  // stackoverflow says that query is the previous and train is the current
+        cv::KeyPoint currPoint = currFrame.keypoints[it->trainIdx];  // stackoverflow.com/questions/13318853
+
+        // which boxes in the previous frame enclose prevPoint?
+        std::vector<int> prevFrameEnclosingBoxes;
+        for (int i = 0; i < prevFrame.boundingBoxes.size(); i++)
+        {
+            BoundingBox prevBox = prevFrame.boundingBoxes[i];
+            if (prevBox.roi.contains(prevPoint.pt))
+            {
+                prevBox.keypoints.push_back(prevPoint);
+                prevFrameEnclosingBoxes.push_back(i);
+            }            
+        }
+
+        // which boxes in the current frame enclose currPoint?
+        std::vector<int> currFrameEnclosingBoxes;
+        for (int i = 0; i < currFrame.boundingBoxes.size(); i++)
+        {
+            BoundingBox currBox = currFrame.boundingBoxes[i];
+            if (currBox.roi.contains(currPoint.pt))
+            {
+                currBox.keypoints.push_back(currPoint);
+                currFrameEnclosingBoxes.push_back(i);
+                // we will associate the match to only the current frame's box
+                currBox.kptMatches.push_back(*it);
+            }            
+        }
+
+        // increment the counts
+        for (auto it1 = prevFrameEnclosingBoxes.begin(); it1 != prevFrameEnclosingBoxes.end(); ++it1)
+        {
+            for (auto it2 = currFrameEnclosingBoxes.begin(); it2 != currFrameEnclosingBoxes.end(); ++it2)
+            {
+                matchCounts[(*it1)][(*it2)]++;
+            }
+        }
+    }
+
+    // debug: print out the matrix of paired counts
+    bool bVis = false;
+    if (bVis)
+    {
+        printf("__|_");
+        for (int j = 0; j < matchCounts[0].size(); ++j)
+        {
+            printf("%3d_", j);
+        }
+        printf("\n");
+        for (int i = 0; i < matchCounts.size(); ++i)
+        {
+            printf("%d | ", i);
+            for (int j = 0; j < matchCounts[i].size(); ++j)
+            {
+                printf("%3d ", matchCounts[i][j]);
+            }
+            printf("\n");
+        }
+    }
+
+    // find the stable matches:
+    // prev box A and curr box B are a stable match if most matches from A are to B, and most matches into B are from A
+    // (note we may also need to add a threshold for "...and at least N points")
+    std::vector<int> idxOfBestCurrentBox;
+    std::vector<int> idxOfBestPrevBox;
+    std::vector<int> maxMatchToCurrent;
+    for (int i = 0; i < matchCounts.size(); ++i)
+    {
+        idxOfBestCurrentBox.push_back(-1);
+        maxMatchToCurrent.push_back(0);
+    }
+    std::vector<int> maxMatchToPrev;
+    for (int j = 0; j < matchCounts[0].size(); ++j)
+    {
+        idxOfBestPrevBox.push_back(-1);
+        maxMatchToPrev.push_back(0);
+    }
+    for (int i = 0; i < matchCounts.size(); ++i)
+    {
+        for (int j = 0; j < matchCounts[i].size(); ++j)
+        {
+            if (maxMatchToCurrent[i] < matchCounts[i][j])
+            {
+                maxMatchToCurrent[i] = matchCounts[i][j];
+                idxOfBestCurrentBox[i] = j;
+            }
+            if (maxMatchToPrev[j] < matchCounts[i][j])
+            {
+                maxMatchToPrev[j] = matchCounts[i][j];
+                idxOfBestPrevBox[j] = i;
+            }
+        }
+    }
+
+    // finally, identify stable matches
+    for (int i = 0; i < matchCounts.size(); ++i)
+    {
+        int j = idxOfBestCurrentBox[i];
+        if (j > -1 && idxOfBestPrevBox[j] == i)
+        {
+            bbBestMatches.insert({i, j});
+        }
+    }
+
+    if (bVis)
+    {
+        printf("Best matches for each previous box:\n");
+        for (int i = 0; i < matchCounts.size(); ++i)
+        {
+            printf("    %d | %d with %d points\n", i, idxOfBestCurrentBox[i], maxMatchToCurrent[i]);
+        }
+        printf("Best matches for each current box:\n");
+        for (int j = 0; j < matchCounts[0].size(); ++j)
+        {
+            printf("    %d | %d with %d points\n", j, idxOfBestPrevBox[j], maxMatchToPrev[j]);
+        }
+        printf("Stable matches:\n");
+        for (auto it = bbBestMatches.begin(); it != bbBestMatches.end(); ++it)
+        {
+            printf("%d -> %d\n", it->first, it->second);
+        }
+    }
+    
 }
