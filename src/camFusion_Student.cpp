@@ -110,12 +110,14 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
         char str1[200], str2[200];
         sprintf(str1, "id=%d, #pts=%d", it1->boxID, (int)it1->lidarPoints.size());
         putText(topviewImg, str1, cv::Point2f(left-125, bottom+25), cv::FONT_ITALIC, 1, currColor);
+        if (it1->lidarPoints.size() > 0)
+            printf("xmin=%2.2f m, yw=%2.2f m\n", xwmin, ywmax-ywmin);
         sprintf(str2, "xmin=%2.2f m, yw=%2.2f m", xwmin, ywmax-ywmin);
         putText(topviewImg, str2, cv::Point2f(left-125, bottom+63), cv::FONT_ITALIC, 1, currColor);  
     }
 
     // plot distance markers
-    float lineSpacing = 2.0; // gap between distance markers
+    float lineSpacing = 0.1; //2.0; // gap between distance markers
     int nMarkers = floor(worldSize.height / lineSpacing);
     for (size_t i = 0; i < nMarkers; ++i)
     {
@@ -138,7 +140,43 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
 // associate a given bounding box with the keypoints it contains
 void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
 {
-    // ...
+    // Note, we've already associated keypoints and matches to bounding boxes when we were matching bounding boxes;
+    // this just needs to go through those matches and remove outliers.
+    // We'll assume that matches should be moving by approximately the same number of pixels in the box -- at least the same distance!
+    // So any match that moves by a different amount is an outlier.
+
+    // early exit
+    if (boundingBox.kptMatches.size() == 0)
+        return;
+
+    std::vector<double> distances;
+    for (auto it = boundingBox.kptMatches.begin(); it != boundingBox.kptMatches.end(); ++it)
+    {
+        cv::Point2f ptPrev = kptsPrev[it->queryIdx].pt;
+        cv::Point2f ptCurr = kptsCurr[it->queryIdx].pt;
+        double dist = sqrt((ptCurr.x - ptPrev.x) * (ptCurr.x - ptPrev.x) + (ptCurr.y - ptPrev.y) * (ptCurr.y - ptPrev.y));
+        distances.push_back(dist);
+    }
+
+    // compute median distance
+    // we don't care about the error introduced by even vs. odd sizes here, we just need a decent estimate of the center
+    sort(distances.begin(), distances.end());
+    double medianDistance = distances[floor(distances.size() / 2)];
+
+    // Filter out any distances that are too large.
+    // We could conceivably filter out any that are too small, too, but the box right in front of us is a problem since it may well have some keypoints
+    // that are in the same position in the image from one frame to the next.
+    // (This is where thinking about directions would be a good idea.)
+    double minFrac = 0, maxFrac = 1.5;
+    // iterating in reverse so that we can keep the same start pointer and not recreate every time
+    auto start = boundingBox.kptMatches.begin();
+    for (int i = distances.size() - 1; i >= 0; i--)
+    {
+        if (distances[i] < minFrac * medianDistance || distances[i] > maxFrac * medianDistance)
+        {
+            boundingBox.kptMatches.erase(start + i);
+        }
+    }
 }
 
 
@@ -146,20 +184,107 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
-    // ...
+    // we will use the median of the ratios of the pairwise distances between matched keypoints in the two frames
+    // as an estimate of the relative distance to the vehicle
+    std::vector<cv::Point2f> keypointsPrevBox, keypointsCurrBox;
+    for (auto it = kptMatches.begin(); it != kptMatches.end(); ++it)
+    {
+        keypointsPrevBox.push_back(kptsPrev[it->queryIdx].pt);
+        keypointsCurrBox.push_back(kptsCurr[it->queryIdx].pt);
+    }
+
+    std::vector<double> distsPrev, distsCurr;
+    for (int i = 0; i < keypointsPrevBox.size() - 1; i++)
+    {
+        for (int j = i+1; j < keypointsPrevBox.size(); j++)
+        {
+            cv::Point2f pt1 = keypointsPrevBox[i];
+            cv::Point2f pt2 = keypointsPrevBox[j];
+            double dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
+            distsPrev.push_back(dist);
+
+            pt1 = keypointsCurrBox[i];
+            pt2 = keypointsCurrBox[j];
+            dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
+            distsCurr.push_back(dist);
+        }
+    }
+
+    // compute medians
+    sort(distsPrev.begin(), distsPrev.end());
+    sort(distsCurr.begin(), distsCurr.end());
+
+    double medDistancePrev = distsPrev[floor(distsPrev.size() / 2)];
+    double medDistanceCurr = distsCurr[floor(distsPrev.size() / 2)];
+
+    // substitute into constant velocity model, see Lesson 3.3
+    TTC = frameRate / (medDistanceCurr / medDistancePrev - 1);
 }
 
 
 void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
                      std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
 {
-    // ...
+    // We will use the 10th percentile of the point distances (in X) to estimate the collision
+    std::vector<double> prevXVals;
+    for (auto it = lidarPointsPrev.begin(); it != lidarPointsPrev.end(); ++it)
+    {
+        // our projection should filter out points behind the camera, but let's make sure
+        if (it->x > 0)
+        {
+            prevXVals.push_back(it->x);
+        }
+    }
+    sort(prevXVals.begin(), prevXVals.end());
+
+    std::vector<double> currXVals;
+    for (auto it = lidarPointsCurr.begin(); it != lidarPointsCurr.end(); ++it)
+    {
+        // our projection should filter out points behind the camera, but let's make sure
+        if (it->x > 0)
+        {
+            currXVals.push_back(it->x);
+        }
+    }
+    sort(currXVals.begin(), currXVals.end());
+
+    // find the closest point in X, making sure that the next-closest point isn't too far off
+    double tol = 0.1;
+
+    int closestPrevIx = 0;
+    double closestPrevXVal = prevXVals[0];
+    if ((prevXVals[1] - prevXVals[0]) > tol)
+    {
+        do
+        {
+            ++closestPrevIx;
+            closestPrevXVal = prevXVals[closestPrevIx];
+        } while (closestPrevIx < prevXVals.size() && prevXVals[closestPrevIx] - prevXVals[closestPrevIx-1] > tol);
+    }
+
+    int closestCurrIx = 0;
+    double closestCurrXVal = currXVals[0];
+    if ((currXVals[1] - currXVals[0]) > tol)
+    {
+        do
+        {
+            ++closestCurrIx;
+            closestCurrXVal = currXVals[closestCurrIx];
+        } while (closestCurrIx < currXVals.size() && currXVals[closestCurrIx] - currXVals[closestCurrIx-1] > tol);
+    }
+
+    double speed = (closestPrevXVal - closestCurrXVal) * frameRate;
+    // add a tiny amount to the speed to prevent division by 0
+    // also, if speed is negative, replace it by 0
+    TTC = closestCurrXVal / (max(speed,0.0) + 0.0001);
 }
 
 
 void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
 {
-    // TODO early escapes
+    // early escapes
+    if (matches.size() == 0 || prevFrame.boundingBoxes.size() == 0 || currFrame.boundingBoxes.size() == 0)
+        return;
 
     // create and initialize the structure that will keep the counts of matches between pairs of bounding boxes
     // matchCounts[i][j] = number of matches where the first point is contained in prevFrame.boundingBoxes[i]
@@ -175,7 +300,9 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
         matchCounts.push_back(row);
     }
 
-    // figure out which boxes contain the points from each match
+    // Figure out which boxes contain the points from each match
+    // Note, while we will eventually use the keypoint matches on the box, we're not going to use the keypoints
+    // (the keypoint matches will continue to refer to the indices of points inside the entire frame, not inside the box)
     for (auto it = matches.begin(); it != matches.end(); ++it)
     {
         cv::KeyPoint prevPoint = prevFrame.keypoints[it->queryIdx];  // stackoverflow says that query is the previous and train is the current
@@ -185,10 +312,10 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
         std::vector<int> prevFrameEnclosingBoxes;
         for (int i = 0; i < prevFrame.boundingBoxes.size(); i++)
         {
-            BoundingBox prevBox = prevFrame.boundingBoxes[i];
-            if (prevBox.roi.contains(prevPoint.pt))
+            BoundingBox* prevBox = &(prevFrame.boundingBoxes[i]);
+            if (prevBox->roi.contains(prevPoint.pt))
             {
-                prevBox.keypoints.push_back(prevPoint);
+                prevBox->keypoints.push_back(prevPoint);
                 prevFrameEnclosingBoxes.push_back(i);
             }            
         }
@@ -197,13 +324,13 @@ void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bb
         std::vector<int> currFrameEnclosingBoxes;
         for (int i = 0; i < currFrame.boundingBoxes.size(); i++)
         {
-            BoundingBox currBox = currFrame.boundingBoxes[i];
-            if (currBox.roi.contains(currPoint.pt))
+            BoundingBox* currBox = &(currFrame.boundingBoxes[i]);
+            if (currBox->roi.contains(currPoint.pt))
             {
-                currBox.keypoints.push_back(currPoint);
+                currBox->keypoints.push_back(currPoint);
                 currFrameEnclosingBoxes.push_back(i);
                 // we will associate the match to only the current frame's box
-                currBox.kptMatches.push_back(*it);
+                currBox->kptMatches.push_back(*it);
             }            
         }
 
