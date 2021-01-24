@@ -68,27 +68,33 @@ int main(int argc, const char *argv[])
     P_rect_00.at<double>(1,0) = 0.000000e+00; P_rect_00.at<double>(1,1) = 7.215377e+02; P_rect_00.at<double>(1,2) = 1.728540e+02; P_rect_00.at<double>(1,3) = 0.000000e+00;
     P_rect_00.at<double>(2,0) = 0.000000e+00; P_rect_00.at<double>(2,1) = 0.000000e+00; P_rect_00.at<double>(2,2) = 1.000000e+00; P_rect_00.at<double>(2,3) = 0.000000e+00;    
 
-    // misc
-    double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
-    int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
-    vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
-    bool bVis = false;            // visualize results
-
-    std::vector<string> detectors = {"HARRIS", "SHITOMASI", "FAST", "BRISK", "ORB", "AKAZE", "SIFT"};
-    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT"};
+    std::vector<string> detectors = {/*"SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE",*/ "SIFT"};
+    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE","SIFT"};
     for (auto iDetector = detectors.begin(); iDetector != detectors.end(); ++iDetector)
     {
         string detectorType = *iDetector;
         for (auto iDescriptor = descriptors.begin(); iDescriptor != descriptors.end(); ++iDescriptor)
         {
             string descriptorName = *iDescriptor;
-            printf("Detector %s, descriptor %s\n", detectorType.c_str(), descriptorName.c_str());
+            ofstream timingdata;
+            char filename[100];
+            sprintf(filename, "timing_%s_%s.csv", detectorType.c_str(), descriptorName.c_str());
+            timingdata.open(filename);
+
+            timingdata << "Detector " << detectorType << ", descriptor " << descriptorName << "\n";
+            cout << "Detector " << detectorType << ", descriptor " << descriptorName << endl;
+            timingdata << "imgIndex, detectorType, descriptorName, ttcCamera, ttcLidar\n";
+
+    // misc
+    double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
+    int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
+    vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
+    bool bVis = false;            // visualize results
 
     /* MAIN LOOP OVER ALL IMAGES */
 
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
-        printf("starting image %zd\n", imgStartIndex + imgIndex);
         /* LOAD IMAGE INTO BUFFER */
 
         // assemble filenames for current index
@@ -110,7 +116,7 @@ int main(int argc, const char *argv[])
             dataBuffer.erase(dataBuffer.begin());
         }
 
-        // std::cout << "#1 : LOAD IMAGE INTO BUFFER done" << std::endl;
+        // cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
 
 
         /* DETECT & CLASSIFY OBJECTS */
@@ -120,7 +126,7 @@ int main(int argc, const char *argv[])
         detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
                       yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
 
-        // std::cout << "#2 : DETECT & CLASSIFY OBJECTS done" << std::endl;
+        // cout << "#2 : DETECT & CLASSIFY OBJECTS done" << endl;
 
 
         /* CROP LIDAR POINTS */
@@ -136,7 +142,7 @@ int main(int argc, const char *argv[])
     
         (dataBuffer.end() - 1)->lidarPoints = lidarPoints;
 
-        // std::cout << "#3 : CROP LIDAR POINTS done" << std::endl;
+        // cout << "#3 : CROP LIDAR POINTS done" << endl;
 
 
         /* CLUSTER LIDAR POINT CLOUD */
@@ -154,7 +160,7 @@ int main(int argc, const char *argv[])
         }
         bVis = false;
 
-        // std::cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << std::endl;
+        // cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << endl;
         
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
@@ -195,13 +201,13 @@ int main(int argc, const char *argv[])
                 keypoints.erase(keypoints.begin() + maxKeypoints, keypoints.end());
             }
             cv::KeyPointsFilter::retainBest(keypoints, maxKeypoints);
-            std::cout << " NOTE: Keypoints have been limited!" << std::endl;
+            cout << " NOTE: Keypoints have been limited!" << endl;
         }
 
         // push keypoints and descriptor for current frame to end of data buffer
         (dataBuffer.end() - 1)->keypoints = keypoints;
 
-        // std::cout << "#5 : DETECT KEYPOINTS done" << std::endl;
+        //cout << "#5 : DETECT KEYPOINTS done" << endl;
 
 
         /* EXTRACT KEYPOINT DESCRIPTORS */
@@ -211,13 +217,13 @@ int main(int argc, const char *argv[])
         if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
         {
             // AKAZE descriptor requires KAZE or AKAZE keypoints per documentation
-            std::cout << "AKAZE descriptor requires KAZE or AKAZE keypoins! Replacing descriptor with BRISK" << std::endl;
+            cout << "AKAZE descriptor requires KAZE or AKAZE keypoins! Replacing descriptor with BRISK" << endl;
             descriptorName = "BRISK";
         }
         if (descriptorName.compare("ORB") == 0 && detectorType.compare("SIFT") == 0)
         {
             // OpenCV bug, ORB and SIFT are incompatible
-            std::cout << "ORB descriptor cannot be used with SIFT detector! Replacing descriptor with BRISK" << std::endl;
+            cout << "ORB descriptor cannot be used with SIFT detector! Replacing descriptor with BRISK" << endl;
             descriptorName = "BRISK";
         }
         descKeypoints((dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->cameraImg, descriptors, descriptorName);
@@ -225,7 +231,7 @@ int main(int argc, const char *argv[])
         // push descriptors for current frame to end of data buffer
         (dataBuffer.end() - 1)->descriptors = descriptors;
 
-        // std::cout << "#6 : EXTRACT DESCRIPTORS done" << std::endl;
+        //cout << "#6 : EXTRACT DESCRIPTORS done" << endl;
 
 
         if (dataBuffer.size() > 1) // wait until at least two images have been processed
@@ -241,7 +247,7 @@ int main(int argc, const char *argv[])
             if (descriptorName.compare("SIFT") == 0)
                 descriptorType = "DES_HOG";
 
-            string selectorType = "SEL_NN";       // SEL_NN, SEL_KNN
+            string selectorType = "SEL_KNN";       // SEL_NN, SEL_KNN
 
             matchDescriptors((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints,
                              (dataBuffer.end() - 2)->descriptors, (dataBuffer.end() - 1)->descriptors,
@@ -250,7 +256,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
 
-            // std::cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << std::endl;
+            // cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << endl;
 
             
             /* TRACK 3D OBJECT BOUNDING BOXES */
@@ -264,7 +270,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
 
-            // std::cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << std::endl;
+            // cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -308,7 +314,7 @@ int main(int argc, const char *argv[])
                     //// EOF STUDENT ASSIGNMENT
 
                     bVis = false;
-                    printf("%zd, %s, %s, %.02f, %.02f\n", imgIndex, detectorType.c_str(), descriptorName.c_str(), ttcCamera, ttcLidar);
+                    timingdata << imgIndex << ", " << detectorType << ", " << descriptorName << ", " << ttcCamera << ", " << ttcLidar << "\n";
                     if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
@@ -322,7 +328,7 @@ int main(int argc, const char *argv[])
                         string windowName = "Final Results : TTC";
                         cv::namedWindow(windowName, 4);
                         cv::imshow(windowName, visImg);
-                        std::cout << "Press key to continue to next frame" << std::endl;
+                        cout << "Press key to continue to next frame" << endl;
                         cv::waitKey(0);
                     }
                     bVis = false;
@@ -334,6 +340,7 @@ int main(int argc, const char *argv[])
 
     } // eof loop over all images
 
+            timingdata.close();
         }
     } // eof loop over detector/descriptor combinations
 

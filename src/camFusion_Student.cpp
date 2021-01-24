@@ -218,7 +218,15 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     double medDistanceCurr = distsCurr[floor(distsPrev.size() / 2)];
 
     // substitute into constant velocity model, see Lesson 3.3
-    TTC = frameRate / (medDistanceCurr / medDistancePrev - 1);
+    // if the car apparently moved farther away (i.e. became smaller), return a large positive number, not a negative one
+    if (medDistanceCurr < medDistancePrev)
+    {
+        TTC = 10000;
+    }
+    else
+    {
+        TTC = frameRate / (medDistanceCurr / medDistancePrev - 1);
+    }
 }
 
 
