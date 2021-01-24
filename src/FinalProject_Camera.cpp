@@ -74,6 +74,16 @@ int main(int argc, const char *argv[])
     vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
     bool bVis = false;            // visualize results
 
+    std::vector<string> detectors = {"HARRIS", "SHITOMASI", "FAST", "BRISK", "ORB", "AKAZE", "SIFT"};
+    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT"};
+    for (auto iDetector = detectors.begin(); iDetector != detectors.end(); ++iDetector)
+    {
+        string detectorType = *iDetector;
+        for (auto iDescriptor = descriptors.begin(); iDescriptor != descriptors.end(); ++iDescriptor)
+        {
+            string descriptorName = *iDescriptor;
+            printf("Detector %s, descriptor %s\n", detectorType.c_str(), descriptorName.c_str());
+
     /* MAIN LOOP OVER ALL IMAGES */
 
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
@@ -100,7 +110,7 @@ int main(int argc, const char *argv[])
             dataBuffer.erase(dataBuffer.begin());
         }
 
-        // cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
+        // std::cout << "#1 : LOAD IMAGE INTO BUFFER done" << std::endl;
 
 
         /* DETECT & CLASSIFY OBJECTS */
@@ -110,7 +120,7 @@ int main(int argc, const char *argv[])
         detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
                       yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
 
-        // cout << "#2 : DETECT & CLASSIFY OBJECTS done" << endl;
+        // std::cout << "#2 : DETECT & CLASSIFY OBJECTS done" << std::endl;
 
 
         /* CROP LIDAR POINTS */
@@ -126,7 +136,7 @@ int main(int argc, const char *argv[])
     
         (dataBuffer.end() - 1)->lidarPoints = lidarPoints;
 
-        // cout << "#3 : CROP LIDAR POINTS done" << endl;
+        // std::cout << "#3 : CROP LIDAR POINTS done" << std::endl;
 
 
         /* CLUSTER LIDAR POINT CLOUD */
@@ -144,7 +154,7 @@ int main(int argc, const char *argv[])
         }
         bVis = false;
 
-        // cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << endl;
+        // std::cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << std::endl;
         
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
@@ -159,12 +169,15 @@ int main(int argc, const char *argv[])
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
 
-        // not implementing Harris since it wasn't explicitly requested and there doesn't seem to be any avantage
-        string detectorType = "FAST"; // SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
+        // string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
 
         if (detectorType.compare("SHITOMASI") == 0)
         {
             detKeypointsShiTomasi(keypoints, imgGray, false);
+        }
+        else if (detectorType.compare("HARRIS") == 0)
+        {
+            detKeypointsHarris(keypoints, imgGray, false);
         }
         else
         {
@@ -182,19 +195,19 @@ int main(int argc, const char *argv[])
                 keypoints.erase(keypoints.begin() + maxKeypoints, keypoints.end());
             }
             cv::KeyPointsFilter::retainBest(keypoints, maxKeypoints);
-            cout << " NOTE: Keypoints have been limited!" << endl;
+            std::cout << " NOTE: Keypoints have been limited!" << std::endl;
         }
 
         // push keypoints and descriptor for current frame to end of data buffer
         (dataBuffer.end() - 1)->keypoints = keypoints;
 
-        // cout << "#5 : DETECT KEYPOINTS done" << endl;
+        // std::cout << "#5 : DETECT KEYPOINTS done" << std::endl;
 
 
         /* EXTRACT KEYPOINT DESCRIPTORS */
 
         cv::Mat descriptors;
-        string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+        // string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
         if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
         {
             // AKAZE descriptor requires KAZE or AKAZE keypoints per documentation
@@ -212,7 +225,7 @@ int main(int argc, const char *argv[])
         // push descriptors for current frame to end of data buffer
         (dataBuffer.end() - 1)->descriptors = descriptors;
 
-        // cout << "#6 : EXTRACT DESCRIPTORS done" << endl;
+        // std::cout << "#6 : EXTRACT DESCRIPTORS done" << std::endl;
 
 
         if (dataBuffer.size() > 1) // wait until at least two images have been processed
@@ -237,7 +250,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
 
-            // cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << endl;
+            // std::cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << std::endl;
 
             
             /* TRACK 3D OBJECT BOUNDING BOXES */
@@ -251,7 +264,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
 
-            // cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
+            // std::cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << std::endl;
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -295,7 +308,7 @@ int main(int argc, const char *argv[])
                     //// EOF STUDENT ASSIGNMENT
 
                     bVis = false;
-                    printf("    TTC Lidar : %f s\n", ttcLidar);
+                    printf("%zd, %s, %s, %.02f, %.02f\n", imgIndex, detectorType.c_str(), descriptorName.c_str(), ttcCamera, ttcLidar);
                     if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
@@ -309,7 +322,7 @@ int main(int argc, const char *argv[])
                         string windowName = "Final Results : TTC";
                         cv::namedWindow(windowName, 4);
                         cv::imshow(windowName, visImg);
-                        cout << "Press key to continue to next frame" << endl;
+                        std::cout << "Press key to continue to next frame" << std::endl;
                         cv::waitKey(0);
                     }
                     bVis = false;
@@ -320,6 +333,9 @@ int main(int argc, const char *argv[])
         }
 
     } // eof loop over all images
+
+        }
+    } // eof loop over detector/descriptor combinations
 
     return 0;
 }
