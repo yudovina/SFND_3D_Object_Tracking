@@ -190,7 +190,7 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     for (auto it = kptMatches.begin(); it != kptMatches.end(); ++it)
     {
         keypointsPrevBox.push_back(kptsPrev[it->queryIdx].pt);
-        keypointsCurrBox.push_back(kptsCurr[it->queryIdx].pt);
+        keypointsCurrBox.push_back(kptsCurr[it->trainIdx].pt);
     }
 
     std::vector<double> distsPrev, distsCurr;
@@ -215,7 +215,7 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     sort(distsCurr.begin(), distsCurr.end());
 
     double medDistancePrev = distsPrev[floor(distsPrev.size() / 2)];
-    double medDistanceCurr = distsCurr[floor(distsPrev.size() / 2)];
+    double medDistanceCurr = distsCurr[floor(distsCurr.size() / 2)];
 
     // substitute into constant velocity model, see Lesson 3.3
     // if the car apparently moved farther away (i.e. became smaller), return a large positive number, not a negative one
@@ -225,7 +225,7 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     }
     else
     {
-        TTC = frameRate / (medDistanceCurr / medDistancePrev - 1);
+        TTC = 1 / frameRate * 1 / (medDistanceCurr / medDistancePrev - 1);
     }
 }
 

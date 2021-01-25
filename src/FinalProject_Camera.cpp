@@ -69,7 +69,7 @@ int main(int argc, const char *argv[])
     P_rect_00.at<double>(2,0) = 0.000000e+00; P_rect_00.at<double>(2,1) = 0.000000e+00; P_rect_00.at<double>(2,2) = 1.000000e+00; P_rect_00.at<double>(2,3) = 0.000000e+00;    
 
     std::vector<string> detectors = {/*"SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE",*/ "SIFT"};
-    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE","SIFT"};
+    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT"};
     for (auto iDetector = detectors.begin(); iDetector != detectors.end(); ++iDetector)
     {
         string detectorType = *iDetector;
