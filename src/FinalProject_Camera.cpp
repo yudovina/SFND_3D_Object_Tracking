@@ -68,23 +68,6 @@ int main(int argc, const char *argv[])
     P_rect_00.at<double>(1,0) = 0.000000e+00; P_rect_00.at<double>(1,1) = 7.215377e+02; P_rect_00.at<double>(1,2) = 1.728540e+02; P_rect_00.at<double>(1,3) = 0.000000e+00;
     P_rect_00.at<double>(2,0) = 0.000000e+00; P_rect_00.at<double>(2,1) = 0.000000e+00; P_rect_00.at<double>(2,2) = 1.000000e+00; P_rect_00.at<double>(2,3) = 0.000000e+00;    
 
-    std::vector<string> detectors = {/*"SHITOMASI", "HARRIS", "FAST", "BRISK", "ORB", "AKAZE",*/ "SIFT"};
-    std::vector<string> descriptors = {"BRISK", "BRIEF", "ORB", "FREAK", "AKAZE", "SIFT"};
-    for (auto iDetector = detectors.begin(); iDetector != detectors.end(); ++iDetector)
-    {
-        string detectorType = *iDetector;
-        for (auto iDescriptor = descriptors.begin(); iDescriptor != descriptors.end(); ++iDescriptor)
-        {
-            string descriptorName = *iDescriptor;
-            ofstream timingdata;
-            char filename[100];
-            sprintf(filename, "timing_%s_%s.csv", detectorType.c_str(), descriptorName.c_str());
-            timingdata.open(filename);
-
-            timingdata << "Detector " << detectorType << ", descriptor " << descriptorName << "\n";
-            cout << "Detector " << detectorType << ", descriptor " << descriptorName << endl;
-            timingdata << "imgIndex, detectorType, descriptorName, ttcCamera, ttcLidar\n";
-
     // misc
     double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
@@ -116,7 +99,7 @@ int main(int argc, const char *argv[])
             dataBuffer.erase(dataBuffer.begin());
         }
 
-        // cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
+        cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
 
 
         /* DETECT & CLASSIFY OBJECTS */
@@ -126,7 +109,7 @@ int main(int argc, const char *argv[])
         detectObjects((dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->boundingBoxes, confThreshold, nmsThreshold,
                       yoloBasePath, yoloClassesFile, yoloModelConfiguration, yoloModelWeights, bVis);
 
-        // cout << "#2 : DETECT & CLASSIFY OBJECTS done" << endl;
+        cout << "#2 : DETECT & CLASSIFY OBJECTS done" << endl;
 
 
         /* CROP LIDAR POINTS */
@@ -142,7 +125,7 @@ int main(int argc, const char *argv[])
     
         (dataBuffer.end() - 1)->lidarPoints = lidarPoints;
 
-        // cout << "#3 : CROP LIDAR POINTS done" << endl;
+        cout << "#3 : CROP LIDAR POINTS done" << endl;
 
 
         /* CLUSTER LIDAR POINT CLOUD */
@@ -160,7 +143,7 @@ int main(int argc, const char *argv[])
         }
         bVis = false;
 
-        // cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << endl;
+        cout << "#4 : CLUSTER LIDAR POINT CLOUD done" << endl;
         
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
@@ -175,8 +158,7 @@ int main(int argc, const char *argv[])
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
 
-        // string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
-
+        string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
         if (detectorType.compare("SHITOMASI") == 0)
         {
             detKeypointsShiTomasi(keypoints, imgGray, false);
@@ -207,13 +189,13 @@ int main(int argc, const char *argv[])
         // push keypoints and descriptor for current frame to end of data buffer
         (dataBuffer.end() - 1)->keypoints = keypoints;
 
-        //cout << "#5 : DETECT KEYPOINTS done" << endl;
+        cout << "#5 : DETECT KEYPOINTS done" << endl;
 
 
         /* EXTRACT KEYPOINT DESCRIPTORS */
 
         cv::Mat descriptors;
-        // string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+        string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
         if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
         {
             // AKAZE descriptor requires KAZE or AKAZE keypoints per documentation
@@ -256,7 +238,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end() - 1)->kptMatches = matches;
 
-            // cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << endl;
+            cout << "#7 : MATCH KEYPOINT DESCRIPTORS done" << endl;
 
             
             /* TRACK 3D OBJECT BOUNDING BOXES */
@@ -270,7 +252,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
 
-            // cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
+            cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -314,7 +296,6 @@ int main(int argc, const char *argv[])
                     //// EOF STUDENT ASSIGNMENT
 
                     bVis = false;
-                    timingdata << imgIndex << ", " << detectorType << ", " << descriptorName << ", " << ttcCamera << ", " << ttcLidar << "\n";
                     if (bVis)
                     {
                         cv::Mat visImg = (dataBuffer.end() - 1)->cameraImg.clone();
@@ -339,10 +320,6 @@ int main(int argc, const char *argv[])
         }
 
     } // eof loop over all images
-
-            timingdata.close();
-        }
-    } // eof loop over detector/descriptor combinations
 
     return 0;
 }
