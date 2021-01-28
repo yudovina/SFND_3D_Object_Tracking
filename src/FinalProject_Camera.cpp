@@ -71,14 +71,34 @@ int main(int argc, const char *argv[])
     // misc
     double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
+
+    std::vector<string> detectors = {/*"FAST", "HARRIS", "SHITOMASI", "BRISK", "ORB",*/ "AKAZE", "SIFT"};
+    std::vector<string> descriptors = {"BRIEF", "BRISK"/*, "ORB", "FREAK", "AKAZE", "SIFT"*/};
+    for (auto detector_it = detectors.begin(); detector_it != detectors.end(); ++detector_it)
+    {
+        string detectorType = *detector_it;
+        for (auto descriptor_it = descriptors.begin(); descriptor_it != descriptors.end(); ++descriptor_it)
+        {
+            string descriptorName = *descriptor_it;
+
+            // incompatible combinations
+            if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
+                continue;
+            if (descriptorName.compare("ORB") == 0 && detectorType.compare("SIFT") == 0)
+                continue;
+
+            printf("Starting detector %s, descriptor %s\n", detectorType.c_str(), descriptorName.c_str());
+
+            ofstream ttcCameraFile;
+            char cameraFilename[200];
+            sprintf(cameraFilename, "%s_%s.csv", detectorType.c_str(), descriptorName.c_str());
+            ttcCameraFile.open(cameraFilename);
+            ttcCameraFile << "imgIndex, ttcCamera" << endl;
+
     vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
     bool bVis = false;            // visualize results
 
     /* MAIN LOOP OVER ALL IMAGES */
-    ofstream ttcLidarFile;
-    ttcLidarFile.open("ttcLidar.csv");
-    ttcLidarFile << "imgIndex, ttcLidar" << endl;
-
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
         /* LOAD IMAGE INTO BUFFER */
@@ -141,8 +161,7 @@ int main(int argc, const char *argv[])
         bVis = false;
         if(bVis)
         {
-            // TODO revert size back to 2000,2000
-            show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4, 20.0), cv::Size(300,2000), true);
+            show3DObjects((dataBuffer.end()-1)->boundingBoxes, cv::Size(4, 5.0), cv::Size(1000,1200), imgNumber.str(), true);
         }
         bVis = false;
 
@@ -161,7 +180,7 @@ int main(int argc, const char *argv[])
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
 
-        string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
+        //string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
         if (detectorType.compare("SHITOMASI") == 0)
         {
             detKeypointsShiTomasi(keypoints, imgGray, false);
@@ -198,7 +217,7 @@ int main(int argc, const char *argv[])
         /* EXTRACT KEYPOINT DESCRIPTORS */
 
         cv::Mat descriptors;
-        string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+        // string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
         if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
         {
             // AKAZE descriptor requires KAZE or AKAZE keypoints per documentation
@@ -288,15 +307,15 @@ int main(int argc, const char *argv[])
                     //// TASK FP.2 -> compute time-to-collision based on Lidar data (implement -> computeTTCLidar)
                     double ttcLidar; 
                     computeTTCLidar(prevBB->lidarPoints, currBB->lidarPoints, sensorFrameRate, ttcLidar);
-                    ttcLidarFile << imgIndex << ", " << ttcLidar << endl;
                     //// EOF STUDENT ASSIGNMENT
 
                     //// STUDENT ASSIGNMENT
                     //// TASK FP.3 -> assign enclosed keypoint matches to bounding box (implement -> clusterKptMatchesWithROI)
                     //// TASK FP.4 -> compute time-to-collision based on camera (implement -> computeTTCCamera)
                     double ttcCamera;
-                    // clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches);
-                    // computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
+                    clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches);
+                    computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
+                    ttcCameraFile << imgIndex << ", " << ttcLidar << endl;
                     //// EOF STUDENT ASSIGNMENT
 
                     bVis = false;
@@ -307,10 +326,12 @@ int main(int argc, const char *argv[])
                         cv::rectangle(visImg, cv::Point(currBB->roi.x, currBB->roi.y), cv::Point(currBB->roi.x + currBB->roi.width, currBB->roi.y + currBB->roi.height), cv::Scalar(0, 255, 0), 2);
                         
                         char str[200];
-                        sprintf(str, "TTC Lidar : %f s, TTC Camera : %f s", ttcLidar, ttcCamera);
+                        // sprintf(str, "TTC Lidar : %f s, TTC Camera : %f s", ttcLidar, ttcCamera);
+                        sprintf(str, "TTC Lidar : %f s", ttcLidar);
                         putText(visImg, str, cv::Point2f(80, 50), cv::FONT_HERSHEY_PLAIN, 2, cv::Scalar(0,0,255));
 
-                        string windowName = "Final Results : TTC";
+                        // string windowName = " Final Results : TTC"
+                        string windowName = imgNumber.str() + " Lidar overlay";
                         cv::namedWindow(windowName, 4);
                         cv::imshow(windowName, visImg);
                         cout << "Press key to continue to next frame" << endl;
@@ -325,7 +346,10 @@ int main(int argc, const char *argv[])
 
     } // eof loop over all images
 
-    ttcLidarFile.close();
+    ttcCameraFile.close();
+        }
+    }
+    
 
     return 0;
 }

@@ -66,7 +66,7 @@ void clusterLidarWithROI(std::vector<BoundingBox> &boundingBoxes, std::vector<Li
 * However, you can make this function work for other sizes too.
 * For instance, to use a 1000x1000 size, adjusting the text positions by dividing them by 2.
 */
-void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, cv::Size imageSize, bool bWait)
+void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, cv::Size imageSize, string imgNumber, bool bWait)
 {
     // create topview image
     cv::Mat topviewImg(imageSize, CV_8UC3, cv::Scalar(255, 255, 255));
@@ -126,7 +126,7 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
     }
 
     // display image
-    string windowName = "3D Objects";
+    string windowName = "3D Objects " + imgNumber;
     cv::namedWindow(windowName, 1);
     cv::imshow(windowName, topviewImg);
 
@@ -158,21 +158,21 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         distances.push_back(dist);
     }
 
-    // compute median distance
-    // we don't care about the error introduced by even vs. odd sizes here, we just need a decent estimate of the center
+    // compute quartiles and interquartile range
+    // we don't care about the error introduced by even vs. odd sizes here
     sort(distances.begin(), distances.end());
-    double medianDistance = distances[floor(distances.size() / 2)];
+    double quartile1 =  distances[floor(distances.size() / 4)], quartile3 = distances[floor(distances.size() * 3 / 4)];
 
-    // Filter out any distances that are too large.
-    // We could conceivably filter out any that are too small, too, but the box right in front of us is a problem since it may well have some keypoints
-    // that are in the same position in the image from one frame to the next.
-    // (This is where thinking about directions would be a good idea.)
-    double minFrac = 0, maxFrac = 1.5;
+    // we will use the definition that "outlier" means "1.5 interquartile ranges below the first quartile, or above the third quartile"
+    // (see e.g. www.mathwords.com/o/outlier.htm)
+    double outlierLowerBound = quartile1 - 1.5 * (quartile3 - quartile1);
+    double outlierUpperBound = quartile3 + 1.5 * (quartile3 - quartile1);
+
     // iterating in reverse so that we can keep the same start pointer and not recreate every time
     auto start = boundingBox.kptMatches.begin();
     for (int i = distances.size() - 1; i >= 0; i--)
     {
-        if (distances[i] < minFrac * medianDistance || distances[i] > maxFrac * medianDistance)
+        if (distances[i] < outlierLowerBound || distances[i] > outlierUpperBound)
         {
             boundingBox.kptMatches.erase(start + i);
         }
@@ -184,7 +184,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
-    // we will use the median of the ratios of the pairwise distances between matched keypoints in the two frames
+    // we will use the ratio of the means of pairwise distances between matched keypoints in the two frames
     // as an estimate of the relative distance to the vehicle
     std::vector<cv::Point2f> keypointsPrevBox, keypointsCurrBox;
     for (auto it = kptMatches.begin(); it != kptMatches.end(); ++it)
@@ -193,7 +193,9 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
         keypointsCurrBox.push_back(kptsCurr[it->trainIdx].pt);
     }
 
-    std::vector<double> distsPrev, distsCurr;
+    double sumDistsPrev = 0, sumDistsCurr = 0;
+    // note the number of keypoints is the same in previous box and in current, since they're matched
+    int numDists = keypointsPrevBox.size() * (keypointsPrevBox.size() - 1) / 2;
     for (int i = 0; i < keypointsPrevBox.size() - 1; i++)
     {
         for (int j = i+1; j < keypointsPrevBox.size(); j++)
@@ -201,31 +203,30 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
             cv::Point2f pt1 = keypointsPrevBox[i];
             cv::Point2f pt2 = keypointsPrevBox[j];
             double dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
-            distsPrev.push_back(dist);
+            sumDistsPrev += dist;
 
             pt1 = keypointsCurrBox[i];
             pt2 = keypointsCurrBox[j];
             dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
-            distsCurr.push_back(dist);
+            sumDistsCurr += dist;
         }
     }
 
-    // compute medians
-    sort(distsPrev.begin(), distsPrev.end());
-    sort(distsCurr.begin(), distsCurr.end());
+    double meanDistancePrev = sumDistsPrev / numDists;
+    double meanDistanceCurr = sumDistsCurr / numDists;
 
-    double medDistancePrev = distsPrev[floor(distsPrev.size() / 2)];
-    double medDistanceCurr = distsCurr[floor(distsCurr.size() / 2)];
-
-    // substitute into constant velocity model, see Lesson 3.3
-    // if the car apparently moved farther away (i.e. became smaller), return a large positive number, not a negative one
-    if (medDistanceCurr < medDistancePrev)
+    // Substitute into constant velocity model, see Lesson 3.3
+    // Note, normally the distance between points in the Curr frame will be larger than in the Prev frame
+    // (since the car is moving towards the vehicle and its apparent size is increasing).
+    // If we detect that the apparent size is shrinking, the formula would have us report negative numbers;
+    // it seems more reasonable to report a large positive value instead.
+    if (meanDistanceCurr < meanDistancePrev)
     {
         TTC = 10000;
     }
     else
     {
-        TTC = 1 / frameRate * 1 / (medDistanceCurr / medDistancePrev - 1);
+        TTC = 1 / frameRate * 1 / (meanDistanceCurr / meanDistancePrev - 1);
     }
 }
 
