@@ -255,7 +255,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
 
-            cout << "#8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
+            cout << imgIndex << " #8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -282,7 +282,7 @@ int main(int argc, const char *argv[])
 
                 // compute TTC for current match
                 // note, replacing the cut-off for size by 10 (not 0) to eliminate the truck in the next lane from the final images
-                if( currBB->lidarPoints.size()>10 && prevBB->lidarPoints.size()>10 ) // only compute TTC if we have Lidar points
+                if( currBB->lidarPoints.size()>100 && prevBB->lidarPoints.size()>100 ) // only compute TTC if we have Lidar points
                 {
                     //// STUDENT ASSIGNMENT
                     //// TASK FP.2 -> compute time-to-collision based on Lidar data (implement -> computeTTCLidar)
