@@ -233,7 +233,8 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
 void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
                      std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
 {
-    // We will use the 10th percentile of the point distances (in X) to estimate the collision
+    // plan: discard closest 2 values, average the next 30 to get a distance estimate
+
     std::vector<double> prevXVals;
     for (auto it = lidarPointsPrev.begin(); it != lidarPointsPrev.end(); ++it)
     {
@@ -256,35 +257,37 @@ void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
     }
     sort(currXVals.begin(), currXVals.end());
 
-    // find the closest point in X, making sure that the next-closest point isn't too far off
-    double tol = 0.1;
-
-    int closestPrevIx = 0;
-    double closestPrevXVal = prevXVals[0];
-    if ((prevXVals[1] - prevXVals[0]) > tol)
-    {
-        do
-        {
-            ++closestPrevIx;
-            closestPrevXVal = prevXVals[closestPrevIx];
-        } while (closestPrevIx < prevXVals.size() && prevXVals[closestPrevIx] - prevXVals[closestPrevIx-1] > tol);
+    // if we don't have enough points for estimation, return -1
+    // this is a safe nonsense value
+    if (prevXVals.size() < 2 || currXVals.size() < 2) {
+        TTC = -1;
+        return;
     }
 
-    int closestCurrIx = 0;
-    double closestCurrXVal = currXVals[0];
-    if ((currXVals[1] - currXVals[0]) > tol)
+    // previous distance will be the mean of points 2 through 31 in the previous frame
+    // (or 2 through end if there's less than 32 points total)
+    double prevDistSum = 0;
+    int prevCount = 32 <= prevXVals.size() ? 32 : prevXVals.size();
+    for (int i = 2; i < prevCount; i++)
     {
-        do
-        {
-            ++closestCurrIx;
-            closestCurrXVal = currXVals[closestCurrIx];
-        } while (closestCurrIx < currXVals.size() && currXVals[closestCurrIx] - currXVals[closestCurrIx-1] > tol);
+        prevDistSum += prevXVals[i];
     }
+    double prevDistance = prevDistSum / prevCount;
 
-    double speed = (closestPrevXVal - closestCurrXVal) * frameRate;
+    // current distance will be the mean of points 2 through 31 in the previous frame
+    // (or 2 through end if there's less than 32 points total)
+    double currDistSum = 0;
+    int currCount = 32 <= currXVals.size() ? 32 : currXVals.size();
+    for (int i = 2; i < currCount; i++)
+    {
+        currDistSum += currXVals[i];
+    }
+    double currDistance = currDistSum / currCount;
+
+    double speed = (prevDistance - currDistance) * frameRate;
     // add a tiny amount to the speed to prevent division by 0
     // also, if speed is negative, replace it by 0
-    TTC = closestCurrXVal / (max(speed,0.0) + 0.0001);
+    TTC = currDistance / (max(speed,0.0) + 0.0001);
 }
 
 
