@@ -142,8 +142,15 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 {
     // Note, we've already associated keypoints and matches to bounding boxes when we were matching bounding boxes;
     // this just needs to go through those matches and remove outliers.
-    // We'll assume that matches should be moving by approximately the same number of pixels in the box -- at least the same distance!
-    // So any match that moves by a different amount is an outlier.
+    // TODO: the plan is to 
+    // 1. compute distances between pairs of keypoints,
+    // 2. compute ratios of (current distance : previous distance) on matched pairs,
+    // 3. find a "robust mean" (median) of those;
+    // 4. remove points for which this is too far off from everything else.
+    // The ideais that if we just have a translation + scaling (as we should), then a given point should get e.g. 2x as far
+    // from every other point (except those other points that are themselves outliers, of course).
+    // A non-outlier point will get 2x as far away from every other non-outlier point, so the median will be 2.
+    // An outlier point will be a random distance away from other points, so the median will be something that's probably not 2.
 
     // early exit
     if (boundingBox.kptMatches.size() == 0)

@@ -72,8 +72,8 @@ int main(int argc, const char *argv[])
     double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
 
-    std::vector<string> detectors = {/*"FAST", "HARRIS", "SHITOMASI", "BRISK", "ORB",*/ "AKAZE", "SIFT"};
-    std::vector<string> descriptors = {"BRIEF", "BRISK"/*, "ORB", "FREAK", "AKAZE", "SIFT"*/};
+    std::vector<string> detectors = {"FAST", "HARRIS", "SHITOMASI", "BRISK", "ORB", "AKAZE", "SIFT"};
+    std::vector<string> descriptors = {"BRIEF", "BRISK", "ORB", "FREAK", "AKAZE", "SIFT"};
     for (auto detector_it = detectors.begin(); detector_it != detectors.end(); ++detector_it)
     {
         string detectorType = *detector_it;
@@ -315,7 +315,7 @@ int main(int argc, const char *argv[])
                     double ttcCamera;
                     clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches);
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
-                    ttcCameraFile << imgIndex << ", " << ttcLidar << endl;
+                    ttcCameraFile << imgIndex << ", " << ttcCamera << endl;
                     //// EOF STUDENT ASSIGNMENT
 
                     bVis = false;
