@@ -142,40 +142,66 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 {
     // Note, we've already associated keypoints and matches to bounding boxes when we were matching bounding boxes;
     // this just needs to go through those matches and remove outliers.
-    // We'll assume that matches should be moving by approximately the same number of pixels in the box -- at least the same distance!
-    // So any match that moves by a different amount is an outlier.
+    // The plan is to 
+    // 1. compute distances between pairs of keypoints,
+    // 2. compute ratios of (current distance : previous distance) on matched pairs,
+    // 3. find a "robust mean" (median) of those;
+    // 4. remove points for which this is too far off from everything else.
+    //
+    // The idea is that if we just have a translation + scaling (as we should), then a given point should get e.g. 2x as far
+    // from every other point (except those other points that are themselves outliers, of course).
+    // A non-outlier point will get 2x as far away from every other non-outlier point, so the median will be 2.
+    // An outlier point will be a random distance away from other points, so the median will be something that's probably not 2.
+    //
+    // Note that we're not using time very efficiently here, because we're computing distance ratios here and again when we're actually estimating ttcCamera.
 
     // early exit
     if (boundingBox.kptMatches.size() == 0)
         return;
-
-    std::vector<double> distances;
+  
+    // compute the median ratio of the distance between this point and another point in the current frame, and in the previous frame
+    std::vector<double> medianDistanceRatiosForAllPoints;
     for (auto it = boundingBox.kptMatches.begin(); it != boundingBox.kptMatches.end(); ++it)
     {
+        std::vector<double> ratiosForThisPoint;
         cv::Point2f ptPrev = kptsPrev[it->queryIdx].pt;
-        cv::Point2f ptCurr = kptsCurr[it->queryIdx].pt;
-        double dist = sqrt((ptCurr.x - ptPrev.x) * (ptCurr.x - ptPrev.x) + (ptCurr.y - ptPrev.y) * (ptCurr.y - ptPrev.y));
-        distances.push_back(dist);
+        cv::Point2f ptCurr = kptsCurr[it->trainIdx].pt;
+        for (auto it2 = boundingBox.kptMatches.begin(); it2 != boundingBox.kptMatches.end(); ++it2)
+        {
+            if (it2->trainIdx == it->trainIdx)
+              continue;
+            cv::Point2f otherPtPrev = kptsPrev[it2->queryIdx].pt;
+            cv::Point2f otherPtCurr = kptsPrev[it2->trainIdx].pt;
+            double distPrevSquared = (otherPtPrev.x - ptPrev.x)*(otherPtPrev.x - ptPrev.x) + (otherPtPrev.y - ptPrev.y)*(otherPtPrev.y - ptPrev.y);
+            double distCurrSquared = (otherPtCurr.x - ptCurr.x)*(otherPtCurr.x - ptCurr.x) + (otherPtCurr.y - ptCurr.y)*(otherPtCurr.y - ptCurr.y);
+            double distRatio = sqrt(distCurrSquared / distPrevSquared);
+            ratiosForThisPoint.push_back(distRatio);
+        }
+        sort(ratiosForThisPoint.begin(), ratiosForThisPoint.end());
+        double medianRatioForThisPoint = ratiosForThisPoint[floor(ratiosForThisPoint.size() / 2)];
+
+        medianDistanceRatiosForAllPoints.push_back(medianRatioForThisPoint);
     }
-
-    // compute quartiles and interquartile range
-    // we don't care about the error introduced by even vs. odd sizes here
-    sort(distances.begin(), distances.end());
-    double quartile1 =  distances[floor(distances.size() / 4)], quartile3 = distances[floor(distances.size() * 3 / 4)];
-
-    // we will use the definition that "outlier" means "1.5 interquartile ranges below the first quartile, or above the third quartile"
-    // (see e.g. www.mathwords.com/o/outlier.htm)
-    double outlierLowerBound = quartile1 - 1.5 * (quartile3 - quartile1);
-    double outlierUpperBound = quartile3 + 1.5 * (quartile3 - quartile1);
-
-    // iterating in reverse so that we can keep the same start pointer and not recreate every time
+  
+    // identify points where the median ratio is too large or too small
+    // (first, create a copy of the original array so that we'll be able to look up a particular match's value!)
+    std::vector<double> medianDistanceRatiosForAllPoints_copy = medianDistanceRatiosForAllPoints;
+    sort(medianDistanceRatiosForAllPoints.begin(), medianDistanceRatiosForAllPoints.end());
+    double quartile1 = medianDistanceRatiosForAllPoints[floor(medianDistanceRatiosForAllPoints.size() / 4)];
+    double quartile3 = medianDistanceRatiosForAllPoints[floor(medianDistanceRatiosForAllPoints.size() * 3 / 4)];
+    double lowerbound = quartile1 - 1.5 * (quartile3 - quartile1);
+    double upperbound = quartile3 + 1.5 * (quartile3 - quartile1);
+  
+    // go through keypoint matches and erase any where the mean distance for that point is too small or too large
+    // this is best done backwards so that the start remains valid the entire time
     auto start = boundingBox.kptMatches.begin();
-    for (int i = distances.size() - 1; i >= 0; i--)
+    for (int i = boundingBox.kptMatches.size() - 1; i >= 0; i--)
     {
-        if (distances[i] < outlierLowerBound || distances[i] > outlierUpperBound)
+        double val = medianDistanceRatiosForAllPoints_copy[i];
+        if (val < lowerbound || val > upperbound)
         {
             boundingBox.kptMatches.erase(start + i);
-        }
+        }            
     }
 }
 
@@ -184,7 +210,7 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
-    // we will use the ratio of the means of pairwise distances between matched keypoints in the two frames
+    // we will use the median of the ratio of pairwise distances between matched keypoints in the two frames
     // as an estimate of the relative distance to the vehicle
     std::vector<cv::Point2f> keypointsPrevBox, keypointsCurrBox;
     for (auto it = kptMatches.begin(); it != kptMatches.end(); ++it)
@@ -193,40 +219,38 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
         keypointsCurrBox.push_back(kptsCurr[it->trainIdx].pt);
     }
 
-    double sumDistsPrev = 0, sumDistsCurr = 0;
-    // note the number of keypoints is the same in previous box and in current, since they're matched
-    int numDists = keypointsPrevBox.size() * (keypointsPrevBox.size() - 1) / 2;
+    std::vector<double> ratios;
     for (int i = 0; i < keypointsPrevBox.size() - 1; i++)
     {
         for (int j = i+1; j < keypointsPrevBox.size(); j++)
         {
             cv::Point2f pt1 = keypointsPrevBox[i];
             cv::Point2f pt2 = keypointsPrevBox[j];
-            double dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
-            sumDistsPrev += dist;
+            double distPrev = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
 
             pt1 = keypointsCurrBox[i];
             pt2 = keypointsCurrBox[j];
-            dist = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
-            sumDistsCurr += dist;
+            double distCurr = sqrt((pt1.x - pt2.x) * (pt1.x - pt2.x) + (pt1.y - pt2.y) * (pt1.y - pt2.y));
+            
+            ratios.push_back(distCurr / distPrev);
         }
     }
 
-    double meanDistancePrev = sumDistsPrev / numDists;
-    double meanDistanceCurr = sumDistsCurr / numDists;
+    sort(ratios.begin(), ratios.end());
+    double medianRatio = ratios[floor(ratios.size() / 2)];
 
     // Substitute into constant velocity model, see Lesson 3.3
     // Note, normally the distance between points in the Curr frame will be larger than in the Prev frame
     // (since the car is moving towards the vehicle and its apparent size is increasing).
     // If we detect that the apparent size is shrinking, the formula would have us report negative numbers;
     // it seems more reasonable to report a large positive value instead.
-    if (meanDistanceCurr < meanDistancePrev)
+    if (medianRatio < 1)
     {
         TTC = 10000;
     }
     else
     {
-        TTC = 1 / frameRate * 1 / (meanDistanceCurr / meanDistancePrev - 1);
+        TTC = 1 / frameRate * 1 / (medianRatio - 1);
     }
 }
 
