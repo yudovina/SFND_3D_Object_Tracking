@@ -72,29 +72,6 @@ int main(int argc, const char *argv[])
     double sensorFrameRate = 10.0 / imgStepWidth; // frames per second for Lidar and camera
     int dataBufferSize = 2;       // no. of images which are held in memory (ring buffer) at the same time
 
-    std::vector<string> detectors = {/*"FAST", "HARRIS",*/ "SHITOMASI", "BRISK", "ORB", "AKAZE", "SIFT"};
-    std::vector<string> descriptors = {"BRIEF", "BRISK", "ORB", "FREAK", "AKAZE", "SIFT"};
-    for (auto detector_it = detectors.begin(); detector_it != detectors.end(); ++detector_it)
-    {
-        string detectorType = *detector_it;
-        for (auto descriptor_it = descriptors.begin(); descriptor_it != descriptors.end(); ++descriptor_it)
-        {
-            string descriptorName = *descriptor_it;
-
-            // incompatible combinations
-            if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
-                continue;
-            if (descriptorName.compare("ORB") == 0 && detectorType.compare("SIFT") == 0)
-                continue;
-
-            printf("Starting detector %s, descriptor %s\n", detectorType.c_str(), descriptorName.c_str());
-
-            ofstream ttcCameraFile;
-            char cameraFilename[200];
-            sprintf(cameraFilename, "%s_%s.csv", detectorType.c_str(), descriptorName.c_str());
-            ttcCameraFile.open(cameraFilename);
-            ttcCameraFile << "imgIndex, ttcCamera" << endl;
-
     vector<DataFrame> dataBuffer; // list of data frames which are held in memory at the same time
     bool bVis = false;            // visualize results
 
@@ -180,7 +157,7 @@ int main(int argc, const char *argv[])
         // extract 2D keypoints from current image
         vector<cv::KeyPoint> keypoints; // create empty feature list for current image
 
-        //string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
+        string detectorType = "FAST"; // HARRIS, SHITOMASI, FAST, BRISK, ORB, AKAZE, SIFT
         if (detectorType.compare("SHITOMASI") == 0)
         {
             detKeypointsShiTomasi(keypoints, imgGray, false);
@@ -198,14 +175,14 @@ int main(int argc, const char *argv[])
         bool bLimitKpts = false;
         if (bLimitKpts)
         {
-            int maxKeypoints = 50;
+            int maxKeypoints = 100;
 
             if (detectorType.compare("SHITOMASI") == 0)
             { // there is no response info, so keep the first 50 as they are sorted in descending quality order
                 keypoints.erase(keypoints.begin() + maxKeypoints, keypoints.end());
             }
             cv::KeyPointsFilter::retainBest(keypoints, maxKeypoints);
-            cout << " NOTE: Keypoints have been limited!" << endl;
+            cout << " NOTE: Keypoints have been limited to " << maxKeypoints << "!" << endl;
         }
 
         // push keypoints and descriptor for current frame to end of data buffer
@@ -217,7 +194,7 @@ int main(int argc, const char *argv[])
         /* EXTRACT KEYPOINT DESCRIPTORS */
 
         cv::Mat descriptors;
-        // string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
+        string descriptorName = "BRIEF"; // BRISK, BRIEF, ORB, FREAK, AKAZE, SIFT
         if (descriptorName.compare("AKAZE") == 0 && detectorType.compare("AKAZE") != 0)
         {
             // AKAZE descriptor requires KAZE or AKAZE keypoints per documentation
@@ -274,7 +251,7 @@ int main(int argc, const char *argv[])
             // store matches in current data frame
             (dataBuffer.end()-1)->bbMatches = bbBestMatches;
 
-            cout << imgIndex << " #8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
+            cout << imgNumber.str() << " #8 : TRACK 3D OBJECT BOUNDING BOXES done" << endl;
 
             /* COMPUTE TTC ON OBJECT IN FRONT */
 
@@ -315,8 +292,23 @@ int main(int argc, const char *argv[])
                     double ttcCamera;
                     clusterKptMatchesWithROI(*currBB, (dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, (dataBuffer.end() - 1)->kptMatches);
                     computeTTCCamera((dataBuffer.end() - 2)->keypoints, (dataBuffer.end() - 1)->keypoints, currBB->kptMatches, sensorFrameRate, ttcCamera);
-                    ttcCameraFile << imgIndex << ", " << ttcCamera << endl;
                     //// EOF STUDENT ASSIGNMENT
+
+                    // visualize keypoint matches (to understand ttcCamera outliers)
+                    bVis = false;
+                    if (bVis)
+                    {
+                        cv::Mat matchImg = (dataBuffer.end() - 2)->cameraImg.clone();
+                        cv::drawMatches((dataBuffer.end() - 2)->cameraImg, (dataBuffer.end() - 2)->keypoints,
+                            (dataBuffer.end() - 1)->cameraImg, (dataBuffer.end() - 1)->keypoints,
+                            currBB->kptMatches, matchImg,
+                            cv::Scalar::all(-1), cv::Scalar::all(-1), vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+
+                        string windowName = imgNumber.str() + " keypoint matches";
+                        cv::namedWindow(windowName, 7);
+                        cv::imshow(windowName, matchImg);
+                        cv::waitKey(0);
+                    }
 
                     bVis = false;
                     if (bVis)
@@ -345,11 +337,6 @@ int main(int argc, const char *argv[])
         }
 
     } // eof loop over all images
-
-    ttcCameraFile.close();
-        }
-    }
-    
 
     return 0;
 }
